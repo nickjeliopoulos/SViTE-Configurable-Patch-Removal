@@ -50,11 +50,16 @@ def gumbel_softmax(logits, k, tau=1, hard=False, eps=1e-10, dim=-1):
     gumbels = _gen_gumbels()  # ~Gumbel(0,1)
     gumbels = (logits + gumbels) / tau  # ~Gumbel(logits,tau)
     y_soft = gumbels.softmax(dim)
+    print("gumbel_softmax params (tau, hard, k) : ({}, {}, {})".format(tau, hard, k))
+    print("y_soft.shape: {}".format(y_soft.shape))
 
     if hard:
+        #print("invoking hard gumbel_softmax(...)")
         # Straight through.
         index = y_soft.topk(k, dim=dim)[1]
+        print("index.shape: {}".format(index.shape))
         y_hard = scatter(logits, index, k)
+        print("y_hard.shape: {}".format(y_hard.shape))
         ret = y_hard - y_soft.detach() + y_soft
     else:
         # Reparametrization trick.
@@ -64,6 +69,8 @@ def gumbel_softmax(logits, k, tau=1, hard=False, eps=1e-10, dim=-1):
         import ipdb
         ipdb.set_trace()
         raise OverflowError(f'gumbel softmax output: {ret}')
+
+    print("gumbel_softmax(...) return value shape: {}".format(ret.shape))
     return ret
 
 class Mlp(nn.Module):
@@ -282,28 +289,38 @@ class VisionTransformer(nn.Module):
         l1_list = []
         B = x.shape[0]
         x = self.patch_embed(x)
+        print("x post patch_embed shape: {}".format(x.shape))
 
         cls_tokens = self.cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
         x = torch.cat((cls_tokens, x), dim=1)
         x = x + self.pos_embed
         x = self.pos_drop(x) # [Batch, token, dim]
+        print("x post pos_drop, cls token, and pos_embed shape: {}".format(x.shape))
 
         if tau > 0:
             emb_dim = x.shape[2]
+            print("embedding dim size: {}".format(emb_dim))
             token_number = x.shape[1]
+            print("patch count: {}".format(token_number))
             token_scores = self.gumbel(x)
             token_scores = token_scores.reshape(B, -1)
+            print("patch score shape: {}".format(token_scores.shape))
             token_mask = gumbel_softmax(F.log_softmax(token_scores, dim=-1), k=number, tau=tau, hard=True)
+            print("patch mask shape: {}".format(token_mask.shape))
             token_mask[:,0] = 1.
             token_mask = token_mask.expand(emb_dim,-1,-1).permute(1,2,0)
+            print("patch mask shape post-expand: {}".format(token_mask.shape))
 
             x = x * token_mask
+            print("elementwise patch mask and patch embedding multiply shape: {}".format(x.shape))
 
         for blk in self.blocks:
             x, l1 = blk(x)
             l1_list.append(l1)
 
         x = self.norm(x)
+        print('x output shape: {}'.format(x[:,0].shape))
+
         return x[:, 0], l1_list
 
     def forward(self, x, tau=-1, number=197):
